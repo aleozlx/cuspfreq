@@ -72,10 +72,10 @@ __global__ void SuperpixelFreqKernel_10Area(const T_in* in, T_out* out) {
 			  IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x,
 			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
 	if(INTERIOR3D){
-		const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
-			  PER_THREAD_COLS = spfreq_shape.stride.in[3],
-			  IDX_TILE_ROWS = threadIdx.y / PER_THREAD_COLS * spfreq_shape._spatial_sz.rows,
-			  IDX_TILE_COLS = threadIdx.y % PER_THREAD_COLS * spfreq_shape._spatial_sz.cols,
+		const int PER_THREAD_ROWS = spfreq_shape.per_thread.rows,
+			  PER_THREAD_COLS = spfreq_shape.per_thread.cols,
+			  IDX_TILE_ROWS = threadIdx.y / PER_THREAD_COLS * spfreq_shape.spatial.rows,
+			  IDX_TILE_COLS = threadIdx.y % PER_THREAD_COLS * spfreq_shape.spatial.cols,
 			  THREAD_INPUT_OFFSET = IDX_BATCH * spfreq_shape.stride.in[0],
 			  INPUT_SPATIAL_STRIDE = spfreq_shape.stride.in[1];
 		T_in sum = 0;
@@ -97,13 +97,11 @@ __global__ void SuperpixelFreqKernel_11Area_chunked(const T_in* in, T_out* out, 
 	const int IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + p_sp,
 			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
 	if(INTERIOR){
-		const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
-			  PER_THREAD_COLS = spfreq_shape.stride.in[3],
-			  IDX_TILE_ROWS = IDX_SPATIAL / spfreq_shape._spatial_sz.cols,
-			  IDX_TILE_COLS = IDX_SPATIAL % spfreq_shape._spatial_sz.cols;
+		const int IDX_TILE_ROWS = IDX_SPATIAL / spfreq_shape.spatial.cols,
+			  IDX_TILE_COLS = IDX_SPATIAL % spfreq_shape.spatial.cols;
 		T_in sum = 0;
-		for(int i = 0; i<PER_THREAD_ROWS; ++i) for(int j = 0; j<PER_THREAD_COLS; ++j) {
-			T_in input_val = ARRAY_IN(IDX_BATCH, IDX_TILE_ROWS*PER_THREAD_ROWS+i, IDX_TILE_COLS*PER_THREAD_COLS+j);
+		for(int i = 0; i<spfreq_shape.per_thread.rows; ++i) for(int j = 0; j<spfreq_shape.per_thread.cols; ++j) {
+			T_in input_val = ARRAY_IN(IDX_BATCH, IDX_TILE_ROWS*spfreq_shape.per_thread.rows+i, IDX_TILE_COLS*spfreq_shape.per_thread.cols+j);
 			if(input_val == IDX_SUPERPIXEL) sum += 1;
 		}
 		ARRAY_OUT(IDX_BATCH, IDX_SUPERPIXEL, IDX_SPATIAL) = static_cast<T_out>(sum);
@@ -176,7 +174,7 @@ template <typename T_in, typename T_out>
 void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape &shape, const T_in* in, T_out* out){
 	dim3 blk_pool(4, 256, 1),
 		grid_pool(GDIV(shape.nsp, blk_pool.x),
-			GDIV(shape.stride.in[2] * shape.stride.in[3], blk_pool.y),
+			GDIV(shape.per_thread.rows * shape.per_thread.cols, blk_pool.y),
 			GDIV(shape.batch_sz, blk_pool.z));
 
 #define TEST_CASE_POOL(Kernel) Kernel <T_in, T_out> <<<grid_pool, blk_pool, 0, device.stream()>>> (in, out)
@@ -197,7 +195,7 @@ void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape
 			break;
 		case 12:
 			{
-				dim3 grid_chunk(1, GDIV(shape._spatial_sz.rows * shape._spatial_sz.cols, blk_pool.y), 1);
+				dim3 grid_chunk(1, GDIV(shape.spatial.rows * shape.spatial.cols, blk_pool.y), 1);
 				
 				for(int p_batch = 0; p_batch < shape.batch_sz; ++p_batch){
 					for(int p_sp=0; p_sp<shape.nsp; p_sp += blk_pool.x)
@@ -207,7 +205,7 @@ void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape
 			break;
 		case 13:
 			{
-				dim3 grid_chunk(1, GDIV(shape._spatial_sz.rows * shape._spatial_sz.cols, blk_pool.y), 1);
+				dim3 grid_chunk(1, GDIV(shape.spatial.rows * shape.spatial.cols, blk_pool.y), 1);
 				
 				for(int p_batch = 0; p_batch < shape.batch_sz; ++p_batch){
 					for(int p_sp=0; p_sp<shape.nsp; p_sp += blk_pool.x)
@@ -248,7 +246,7 @@ struct SuperpixelFreqFunctor<GPUDevice, T_in, T_out> {
 			 */
 			blk_pool(4, 256, 1), 
 			grid_pool(GDIV(shape.nsp, blk_pool.x),
-				GDIV(shape.stride.in[2] * shape.stride.in[3], blk_pool.y),
+				GDIV(shape.per_thread.rows * shape.per_thread.cols, blk_pool.y),
 				GDIV(shape.batch_sz, blk_pool.z)),
 
 			/* 	input shape: (batch_sz, nsp, spatial), (batch_sz, nsp)
