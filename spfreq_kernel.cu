@@ -42,31 +42,20 @@ inline void gpuAssert(cudaError_t code, const char *file, int line) {
 __device__ __constant__ SuperpixelFreqShape _spfreq_shape;
 
 #define INTERIOR3D (IDX_BATCH < spfreq_shape.batch_sz && IDX_SUPERPIXEL < spfreq_shape.nsp && IDX_SPATIAL < spfreq_shape.spatial_sz)
-#define INTERIOR (IDX_SUPERPIXEL < spfreq_shape.nsp && IDX_SPATIAL < spfreq_shape.spatial_sz)
-template <typename T_in, typename T_out>
-__global__ void SuperpixelFreqKernel_00Zero(const T_in* in, T_out* out) {
-	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
-	const int IDX_BATCH = blockIdx.z,
-			  IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x,
-			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
-	T_out &output = out[IDX_BATCH * spfreq_shape.stride.out[0] + 
-						IDX_SUPERPIXEL * spfreq_shape.stride.out[1] + IDX_SPATIAL];
-	if(INTERIOR3D) output = 0.0;
-}
 
 template <typename T_in, typename T_out>
-__global__ void SuperpixelFreqKernel_01SuperpixelIndex(const T_in* in, T_out* out) {
+__global__ void SuperpixelFreqKernel_01SuperpixelIndex(const T_in* data_in, T_out* data_out) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
 	const int IDX_BATCH = blockIdx.z,
 			  IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x,
 			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
-	T_out &output = out[IDX_BATCH * spfreq_shape.stride.out[0] + 
+	T_out &output = data_out[IDX_BATCH * spfreq_shape.stride.out[0] + 
 						IDX_SUPERPIXEL * spfreq_shape.stride.out[1] + IDX_SPATIAL];
 	if(INTERIOR3D) output = static_cast<T_out>(IDX_SUPERPIXEL);
 }
 
 template <typename T_in, typename T_out>
-__global__ void SuperpixelFreqKernel_10Area(const T_in* in, T_out* out) {
+__global__ void SuperpixelFreqKernel_10Area(const T_in* data_in, T_out* data_out) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
 	const int IDX_BATCH = blockIdx.z,
 			  IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x,
@@ -80,56 +69,86 @@ __global__ void SuperpixelFreqKernel_10Area(const T_in* in, T_out* out) {
 			  INPUT_SPATIAL_STRIDE = spfreq_shape.stride.in[1];
 		T_in sum = 0;
 		for(int i = 0; i<PER_THREAD_ROWS; ++i) for(int j = 0; j<PER_THREAD_COLS; ++j) {
-			T_in input_val = in[THREAD_INPUT_OFFSET + (IDX_TILE_ROWS+i) * INPUT_SPATIAL_STRIDE + (IDX_TILE_COLS+j)];
+			T_in input_val = data_in[THREAD_INPUT_OFFSET + (IDX_TILE_ROWS+i) * INPUT_SPATIAL_STRIDE + (IDX_TILE_COLS+j)];
 			if(input_val == IDX_SUPERPIXEL) sum += 1;
 		}
-		out[IDX_BATCH * spfreq_shape.stride.out[0] + 
+		data_out[IDX_BATCH * spfreq_shape.stride.out[0] + 
 			IDX_SUPERPIXEL * spfreq_shape.stride.out[1] + IDX_SPATIAL] = static_cast<T_out>(sum);
 	}
 }
 
-#define ARRAY_IN(N,I,J) in[(N)*spfreq_shape.stride.in[0]+(I)*spfreq_shape.stride.in[1]+(J)]
-#define ARRAY_OUT(N,S,P) out[(N)*spfreq_shape.stride.out[0]+(S)*spfreq_shape.stride.out[1]+(P)]
+#define ARRAY_OUT(N,S,P) data_out[(N)*spfreq_shape.stride.out[0]+(S)*spfreq_shape.stride.out[1]+(P)]
+
+struct meta_t {
+	SuperpixelFreqShape const *shape; 
+	int IDX_SPATIAL;
+	__device__ meta_t(const SuperpixelFreqShape *spfreq_shape) {
+		this->shape = spfreq_shape;
+		this->IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
+	}
+};
+
+struct meta_in_t : meta_t {
+	int IDX_TILE_ROWS, IDX_TILE_COLS;
+	__device__ meta_in_t(const SuperpixelFreqShape *spfreq_shape) : meta_t(spfreq_shape) {
+		this->IDX_TILE_ROWS = this->IDX_SPATIAL / shape->spatial.cols,
+		this->IDX_TILE_COLS = this->IDX_SPATIAL % shape->spatial.cols;
+	}
+	__device__ int addr(int n, int thread_i, int thread_j){
+		int i = this->IDX_TILE_ROWS * shape->per_thread.rows + thread_i,
+			j = this->IDX_TILE_COLS * shape->per_thread.cols + thread_j;
+		return n * shape->stride.in[0] + i * shape->stride.in[1] + j;
+	}
+};
+
+struct meta_out_t : meta_t {
+	int IDX_SUPERPIXEL;
+	__device__ meta_out_t(const SuperpixelFreqShape *spfreq_shape, int OFFSET_SUPERPIXEL) : meta_t(spfreq_shape) {
+		this->IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + OFFSET_SUPERPIXEL;
+	}
+	 __device__ bool interior() {
+		return this->IDX_SUPERPIXEL < shape->nsp && this->IDX_SPATIAL < shape->spatial_sz;
+	}
+	__device__ int addr(int n){
+		return n * shape->stride.out[0] + this->IDX_SUPERPIXEL * shape->stride.out[1] + this->IDX_SPATIAL;
+	}
+};
 
 template <typename T_in, typename T_out>
-__global__ void SuperpixelFreqKernel_11Area_chunked(const T_in* in, T_out* out, int IDX_BATCH, int p_sp) {
+__global__ void SuperpixelFreqKernel_11Area_chunked(const T_in* data_in, T_out* data_out, int IDX_BATCH, int OFFSET_SUPERPIXEL) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
-	const int IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + p_sp,
-			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
-	if(INTERIOR){
-		const int IDX_TILE_ROWS = IDX_SPATIAL / spfreq_shape.spatial.cols,
-			  IDX_TILE_COLS = IDX_SPATIAL % spfreq_shape.spatial.cols;
+	meta_in_t _in(&spfreq_shape); meta_out_t _out(&spfreq_shape, OFFSET_SUPERPIXEL);
+	if(_out.interior()){
 		T_in sum = 0;
-		for(int i = 0; i<spfreq_shape.per_thread.rows; ++i) for(int j = 0; j<spfreq_shape.per_thread.cols; ++j) {
-			T_in input_val = ARRAY_IN(IDX_BATCH, IDX_TILE_ROWS*spfreq_shape.per_thread.rows+i, IDX_TILE_COLS*spfreq_shape.per_thread.cols+j);
-			if(input_val == IDX_SUPERPIXEL) sum += 1;
-		}
-		ARRAY_OUT(IDX_BATCH, IDX_SUPERPIXEL, IDX_SPATIAL) = static_cast<T_out>(sum);
+		for(int i = 0; i<spfreq_shape.per_thread.rows; ++i) for(int j = 0; j<spfreq_shape.per_thread.cols; ++j)
+			if(data_in[_in.addr(IDX_BATCH, i, j)] == _out.IDX_SUPERPIXEL) sum += 1;
+		data_out[_out.addr(IDX_BATCH)] = static_cast<T_out>(sum);
 	}
 }
 
 template <typename T_in, typename T_out>
-__global__ void SuperpixelFreqKernel_12Zero_chunked(const T_in* in, T_out* out, int IDX_BATCH, int p_sp) {
+__global__ void SuperpixelFreqKernel_12Zero_chunked(const T_in* data_in, T_out* data_out, int IDX_BATCH, int OFFSET_SUPERPIXEL) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
-	const int IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + p_sp,
-			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
-	if(INTERIOR){
-		ARRAY_OUT(IDX_BATCH, IDX_SUPERPIXEL, IDX_SPATIAL) = 0;
-	}
+	meta_out_t _out(&spfreq_shape, OFFSET_SUPERPIXEL);
+	if(_out.interior()) data_out[_out.addr(IDX_BATCH)] = 0;
 }
 
 template <typename T_in, typename T_out>
-__global__ void SuperpixelFreqKernel_13Incr_chunked(const T_in* in, T_out* out, int IDX_BATCH, int p_sp) {
+__global__ void SuperpixelFreqKernel_13Incr_chunked(const T_in* data_in, T_out* data_out, int IDX_BATCH, int OFFSET_SUPERPIXEL) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
-	const int IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + p_sp,
-			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
-	if(INTERIOR){
-		ARRAY_OUT(IDX_BATCH, IDX_SUPERPIXEL, IDX_SPATIAL) += 1;
-	}
+	meta_out_t _out(&spfreq_shape, OFFSET_SUPERPIXEL);
+	if(_out.interior()) data_out[_out.addr(IDX_BATCH)] += 1;
+}
+
+template <typename T_in, typename T_out>
+__global__ void SuperpixelFreqKernel_14SpIdx_chunked(const T_in* data_in, T_out* data_out, int IDX_BATCH, int OFFSET_SUPERPIXEL) {
+	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
+	meta_out_t _out(&spfreq_shape, OFFSET_SUPERPIXEL);
+	if(_out.interior()) data_out[_out.addr(IDX_BATCH)] = static_cast<T_out>(_out.IDX_SUPERPIXEL);
 }
 
 template <typename T_out>
-__global__ void SuperpixelFreqKernel_21Norm(T_out* out, T_out* rsum) {
+__global__ void SuperpixelFreqKernel_21Norm(T_out* data_out, T_out* rsum) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
 	const int IDX_BATCH = blockIdx.z,
 			  IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x,
@@ -137,7 +156,7 @@ __global__ void SuperpixelFreqKernel_21Norm(T_out* out, T_out* rsum) {
 	if(INTERIOR3D){
 		T_out normalization = rsum[IDX_BATCH * spfreq_shape.nsp + IDX_SUPERPIXEL];
 		if(normalization!=0.0)
-			out[IDX_BATCH * spfreq_shape.stride.out[0] + 
+			data_out[IDX_BATCH * spfreq_shape.stride.out[0] + 
 				IDX_SUPERPIXEL * spfreq_shape.stride.out[1] + IDX_SPATIAL] /= normalization;
 	}
 }
@@ -152,13 +171,13 @@ T* gpu_vec_ones(int n, cudaStream_t stream){
 }
 
 template<typename T_out>
-T_out* SuperpixelFreqKernel_20RSum(const GPUDevice& device, const SuperpixelFreqShape &shape, const T_out* out){
+T_out* SuperpixelFreqKernel_20RSum(const GPUDevice& device, const SuperpixelFreqShape &shape, const T_out* data_out){
 	T_out *rsum; cudaCheck(cudaMalloc(&rsum, shape.batch_sz*shape.nsp*sizeof(T_out)));
 	cublasHandle_t handle; cublasCreate(&handle); cublasSetStream(handle, device.stream());
 	const float coef[] = {1.0f, 0.0f};
 	float *ones = gpu_vec_ones<float>(shape.nsp, device.stream());
 	for(int IDX_BATCH=0; IDX_BATCH<shape.batch_sz; ++IDX_BATCH){
-		T_out* d_idata = const_cast<T_out*>(&out[IDX_BATCH * shape.stride.out[0]]);
+		T_out* d_idata = const_cast<T_out*>(&data_out[IDX_BATCH * shape.stride.out[0]]);
 		T_out* d_odata = &rsum[IDX_BATCH * shape.nsp];
 		cublasSgemv(handle,
 			CUBLAS_OP_T, shape.spatial_sz, shape.nsp, coef+0, d_idata, shape.spatial_sz,
@@ -171,17 +190,16 @@ T_out* SuperpixelFreqKernel_20RSum(const GPUDevice& device, const SuperpixelFreq
 }
 
 template <typename T_in, typename T_out>
-void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape &shape, const T_in* in, T_out* out){
+void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape &shape, const T_in* data_in, T_out* data_out){
 	dim3 blk_pool(4, 256, 1),
 		grid_pool(GDIV(shape.nsp, blk_pool.x),
 			GDIV(shape.per_thread.rows * shape.per_thread.cols, blk_pool.y),
 			GDIV(shape.batch_sz, blk_pool.z));
 
-#define TEST_CASE_POOL(Kernel) Kernel <T_in, T_out> <<<grid_pool, blk_pool, 0, device.stream()>>> (in, out)
-#define SPFREQ_KERNEL(K) K <T_in, T_out> <<<grid_chunk, blk_pool, 0, device.stream()>>> (in, out, p_batch, p_sp)
+#define TEST_CASE_POOL(Kernel) Kernel <T_in, T_out> <<<grid_pool, blk_pool, 0, device.stream()>>> (data_in, data_out)
+#define SPFREQ_KERNEL(K) K <T_in, T_out> <<<grid_chunk, blk_pool, 0, device.stream()>>> (data_in, data_out, p_batch, p_sp)
 
 	switch(test_case){
-		case 0: TEST_CASE_POOL(SuperpixelFreqKernel_00Zero); break;
 		case 1: TEST_CASE_POOL(SuperpixelFreqKernel_01SuperpixelIndex); break;
 		case 10: TEST_CASE_POOL(SuperpixelFreqKernel_10Area); break;
 		case 11:
@@ -218,16 +236,16 @@ void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape
 		case 20:
 			{
 				TEST_CASE_POOL(SuperpixelFreqKernel_10Area);
-				T_out* rsum = SuperpixelFreqKernel_20RSum(device, shape, out);
-				cudaCheck(cudaMemcpyAsync(out, rsum, shape.batch_sz*shape.nsp*sizeof(T_out), cudaMemcpyDeviceToDevice, device.stream()));
+				T_out* rsum = SuperpixelFreqKernel_20RSum(device, shape, data_out);
+				cudaCheck(cudaMemcpyAsync(data_out, rsum, shape.batch_sz*shape.nsp*sizeof(T_out), cudaMemcpyDeviceToDevice, device.stream()));
 				cudaFree(rsum);
 			}
 			break;
 		case 21:
 			{
 				TEST_CASE_POOL(SuperpixelFreqKernel_10Area);
-				T_out* rsum = SuperpixelFreqKernel_20RSum(device, shape, out);
-				SuperpixelFreqKernel_21Norm <T_out> <<<grid_pool, blk_pool, 0, device.stream()>>> (out, rsum);
+				T_out* rsum = SuperpixelFreqKernel_20RSum(device, shape, data_out);
+				SuperpixelFreqKernel_21Norm <T_out> <<<grid_pool, blk_pool, 0, device.stream()>>> (data_out, rsum);
 				cudaFree(rsum);
 			}
 			break;
@@ -238,7 +256,7 @@ void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape
 
 template <typename T_in, typename T_out>
 struct SuperpixelFreqFunctor<GPUDevice, T_in, T_out> {
-	void operator()(const GPUDevice& device, SuperpixelFreqShape shape, const T_in* in, T_out* out, const int test_kernel = -1) {
+	void operator()(const GPUDevice& device, SuperpixelFreqShape shape, const T_in* data_in, T_out* data_out, const int test_kernel = -1) {
 		dim3 /* input shape: (batch_sz, nsp, {in_rows, in_cols})
 			    output shape: (batch_sz, nsp, spatial = {out_rows, out_cols})
 			    thread assignments: (x, y, z) = 
@@ -261,12 +279,12 @@ struct SuperpixelFreqFunctor<GPUDevice, T_in, T_out> {
 			cudaMemcpyHostToDevice, device.stream()));
 
 		// Unit test trap
-		if(test_kernel >= 0) { unit_test(test_kernel, device, shape, in, out); return; }
+		if(test_kernel >= 0) { unit_test(test_kernel, device, shape, data_in, data_out); return; }
 
 		// Op begins
-		SuperpixelFreqKernel_10Area<T_in, T_out> <<<grid_pool, blk_pool, 0, device.stream()>>> (in, out);
-		T_out* rsum = SuperpixelFreqKernel_20RSum(device, shape, out);
-		SuperpixelFreqKernel_21Norm <T_out> <<<grid_pool, blk_pool, 0, device.stream()>>> (out, rsum);
+		SuperpixelFreqKernel_10Area<T_in, T_out> <<<grid_pool, blk_pool, 0, device.stream()>>> (data_in, data_out);
+		T_out* rsum = SuperpixelFreqKernel_20RSum(device, shape, data_out);
+		SuperpixelFreqKernel_21Norm <T_out> <<<grid_pool, blk_pool, 0, device.stream()>>> (data_out, rsum);
 		cudaFree(rsum);
 	}
 };
