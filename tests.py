@@ -83,18 +83,40 @@ class SpfreqKernelTest(tf.test.TestCase):
 	# 	with self.test_session():
 	# 		result = spfreqOp(sample_input, output_shape = (4, 2, 2), test_kernel=11)
 	# 		self.assertAllEqual(result.eval(), sample_area)
-	
-	def testAreaChunked_adim(self):
-		batch = 1; nsp = 3; cm = 4
+
+	def area_chunked(self, batch, nsp, cm, pool = 16):
 		sample_input = np.random.randint(nsp, size = (batch, cm*2, cm*2)).astype('i4')
 		sample_area = np.array([standard(segments, (cm, cm), nsp) for segments in sample_input])
 		with self.test_session():
-			result = spfreqOp(sample_input, output_shape = (nsp, cm, cm), test_kernel=11)
-			result = result.eval()
-			# print('result', result)
-			# print('answer', sample_area)
-			print('diff', sample_area-result)
+			result = spfreqOp(sample_input, output_shape = (nsp, cm, cm), test_kernel=11).eval()
 			self.assertAllEqual(result, sample_area)
+
+	def testArea_chunked_00(self):
+		self.area_chunked(1, 3, 2, 2)
+
+	def testArea_chunked_01_single_block(self):
+		self.area_chunked(1, 4, 16)
+
+	# def testArea_chunked_02_cm_blocks(self):
+	# 	self.area_chunked(1, 4, 20)
+
+	def testArea_chunked_03_sp_blocks(self):
+		self.area_chunked(1, 8, 16)
+
+	# def testArea_chunked_04_spcm_blocks(self):
+	# 	self.area_chunked(1, 8, 20)
+
+	def testArea_chunked_05_batches(self):
+		self.area_chunked(3, 4, 16)
+
+	def testArea_chunked_06_more_batches(self):
+		self.area_chunked(20, 4, 16)
+
+	def testArea_chunked_07_batches_sp(self):
+		self.area_chunked(20, 8, 16)
+
+	# def testArea_chunked_08_full(self):
+	# 	self.area_chunked(32, 600, 64)
 
 if __name__ == "__main__":
 	tf.test.main()
