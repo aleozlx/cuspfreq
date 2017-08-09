@@ -99,8 +99,8 @@ __global__ void SuperpixelFreqKernel_11Area_chunked(const T_in* in, T_out* out, 
 	if(INTERIOR){
 		const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
 			  PER_THREAD_COLS = spfreq_shape.stride.in[3],
-			  IDX_TILE_ROWS = threadIdx.y / spfreq_shape._spatial_sz.cols,
-			  IDX_TILE_COLS = threadIdx.y % spfreq_shape._spatial_sz.cols;
+			  IDX_TILE_ROWS = IDX_SPATIAL / spfreq_shape._spatial_sz.cols,
+			  IDX_TILE_COLS = IDX_SPATIAL % spfreq_shape._spatial_sz.cols;
 		T_in sum = 0;
 		for(int i = 0; i<PER_THREAD_ROWS; ++i) for(int j = 0; j<PER_THREAD_COLS; ++j) {
 			T_in input_val = ARRAY_IN(IDX_BATCH, IDX_TILE_ROWS*PER_THREAD_ROWS+i, IDX_TILE_COLS*PER_THREAD_COLS+j);
@@ -188,7 +188,7 @@ void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape
 		case 10: TEST_CASE_POOL(SuperpixelFreqKernel_10Area); break;
 		case 11:
 			{
-				dim3 grid_chunk(1, GDIV(shape._spatial_sz.rows * shape._spatial_sz.cols, blk_pool.y), 1);
+				dim3 grid_chunk(1, GDIV(shape.spatial_sz, blk_pool.y), 1);
 				for(int p_batch = 0; p_batch < shape.batch_sz; ++p_batch){
 					for(int p_sp=0; p_sp<shape.nsp; p_sp += blk_pool.x)
 						SPFREQ_KERNEL(SuperpixelFreqKernel_11Area_chunked);
