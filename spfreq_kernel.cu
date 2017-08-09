@@ -191,7 +191,7 @@ T_out* SuperpixelFreqKernel_20RSum(const GPUDevice& device, const SuperpixelFreq
 
 template <typename T_in, typename T_out>
 void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape &shape, const T_in* in, T_out* out){
-	dim3 blk_pool(4, 256, 1),
+	dim3 blk_pool(2, 256, 1),
 		grid_pool(GDIV(shape.nsp, blk_pool.x),
 			GDIV(shape.stride.in[2] * shape.stride.in[3], blk_pool.y),
 			GDIV(shape.batch_sz, blk_pool.z));
