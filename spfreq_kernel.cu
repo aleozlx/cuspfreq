@@ -246,7 +246,7 @@ struct SuperpixelFreqFunctor<GPUDevice, T_in, T_out> {
 			    thread assignments: (x, y, z) = 
 			    	(nsp, per_thread_tile_sz = {in_rows/out_rows, in_cols/out_cols}, batch_sz) -> (nsp, spatial, batch_sz)
 			 */
-			blk_pool(8, 256, 1), 
+			blk_pool(4, 256, 1), 
 			grid_pool(GDIV(shape.nsp, blk_pool.x),
 				GDIV(shape.stride.in[2] * shape.stride.in[3], blk_pool.y),
 				GDIV(shape.batch_sz, blk_pool.z)),
