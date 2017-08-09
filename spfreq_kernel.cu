@@ -88,13 +88,14 @@ __global__ void SuperpixelFreqKernel_10Area(const T_in* in, T_out* out) {
 	}
 }
 
+#define ARRAY_OUT(N,S,P) out[(N)*spfreq_shape.stride.out[0]+(S)*spfreq_shape.stride.out[1]+(P)]
+
 template <typename T_in, typename T_out>
-__global__ void SuperpixelFreqKernel_11Area_chunked(const T_in* in, T_out* out, int sp_begin) {
+__global__ void SuperpixelFreqKernel_11Area_chunked(const T_in* in, T_out* out, int IDX_BATCH, int sp_begin) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
-	const int IDX_BATCH = blockIdx.z,
-			  IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + sp_begin,
+	const int IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + sp_begin,
 			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
-	if(INTERIOR3D){
+	if(INTERIOR){
 		const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
 			  PER_THREAD_COLS = spfreq_shape.stride.in[3],
 			  IDX_TILE_ROWS = threadIdx.y / PER_THREAD_COLS * spfreq_shape._spatial_sz.rows,
@@ -106,8 +107,7 @@ __global__ void SuperpixelFreqKernel_11Area_chunked(const T_in* in, T_out* out, 
 			T_in input_val = in[THREAD_INPUT_OFFSET + (IDX_TILE_ROWS+i) * INPUT_SPATIAL_STRIDE + (IDX_TILE_COLS+j)];
 			if(input_val == IDX_SUPERPIXEL) sum += 1;
 		}
-		out[IDX_BATCH * spfreq_shape.stride.out[0] + 
-			IDX_SUPERPIXEL * spfreq_shape.stride.out[1] + IDX_SPATIAL] = static_cast<T_out>(sum);
+		ARRAY_OUT(IDX_BATCH, IDX_SUPERPIXEL, IDX_SPATIAL) = static_cast<T_out>(sum);
 	}
 }
 
@@ -117,14 +117,7 @@ __global__ void SuperpixelFreqKernel_12Zero_chunked(const T_in* in, T_out* out, 
 	const int IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + sp_begin,
 			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
 	if(INTERIOR){
-		// const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
-		// 	  PER_THREAD_COLS = spfreq_shape.stride.in[3],
-		// 	  IDX_TILE_ROWS = threadIdx.y / PER_THREAD_COLS * spfreq_shape._spatial_sz.rows,
-		// 	  IDX_TILE_COLS = threadIdx.y % PER_THREAD_COLS * spfreq_shape._spatial_sz.cols,
-		// 	  THREAD_INPUT_OFFSET = IDX_BATCH * spfreq_shape.stride.in[0],
-		// 	  INPUT_SPATIAL_STRIDE = spfreq_shape.stride.in[1];
-		out[IDX_BATCH * spfreq_shape.stride.out[0] + 
-			IDX_SUPERPIXEL * spfreq_shape.stride.out[1] + IDX_SPATIAL] = 0;
+		ARRAY_OUT(IDX_BATCH, IDX_SUPERPIXEL, IDX_SPATIAL) = 0;
 	}
 }
 
@@ -134,14 +127,7 @@ __global__ void SuperpixelFreqKernel_13Incr_chunked(const T_in* in, T_out* out, 
 	const int IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + sp_begin,
 			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
 	if(INTERIOR){
-		// const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
-		// 	  PER_THREAD_COLS = spfreq_shape.stride.in[3],
-		// 	  IDX_TILE_ROWS = threadIdx.y / PER_THREAD_COLS * spfreq_shape._spatial_sz.rows,
-		// 	  IDX_TILE_COLS = threadIdx.y % PER_THREAD_COLS * spfreq_shape._spatial_sz.cols,
-		// 	  THREAD_INPUT_OFFSET = IDX_BATCH * spfreq_shape.stride.in[0],
-		// 	  INPUT_SPATIAL_STRIDE = spfreq_shape.stride.in[1];
-		out[IDX_BATCH * spfreq_shape.stride.out[0] + 
-			IDX_SUPERPIXEL * spfreq_shape.stride.out[1] + IDX_SPATIAL] += 1;
+		ARRAY_OUT(IDX_BATCH, IDX_SUPERPIXEL, IDX_SPATIAL) += 1;
 	}
 }
 
@@ -203,12 +189,23 @@ void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape
 		case 10: TEST_CASE_POOL(SuperpixelFreqKernel_10Area); break;
 		case 11:
 			{
-				dim3 grid_chunk(1,
-						GDIV(shape.stride.in[2] * shape.stride.in[3], blk_pool.y),
-						GDIV(shape.batch_sz, blk_pool.z));
-				for(int sp_begin=0; sp_begin<shape.nsp; sp_begin += blk_pool.x){
-					std::printf(">>> sp_begin %d\n", sp_begin);
-					SuperpixelFreqKernel_11Area_chunked <T_in, T_out> <<<grid_chunk, blk_pool, 0, device.stream()>>> (in, out, sp_begin);
+				dim3 grid_chunk(1, GDIV(shape._spatial_sz.rows * shape._spatial_sz.cols, blk_pool.y), 1);
+				for(int p_batch = 0; p_batch < shape.batch_sz; ++p_batch){
+					for(int sp_begin=0; sp_begin<shape.nsp; sp_begin += blk_pool.x){
+						std::printf(">>> sp_begin %d\n", sp_begin);
+						SuperpixelFreqKernel_11Area_chunked <T_in, T_out> <<<grid_chunk, blk_pool, 0, device.stream()>>> (in, out, p_batch, sp_begin);
+					}
+				}
+			}
+			break;
+		case 12:
+			{
+				dim3 grid_chunk(1, GDIV(shape._spatial_sz.rows * shape._spatial_sz.cols, blk_pool.y), 1);
+				
+				for(int p_batch = 0; p_batch < shape.batch_sz; ++p_batch){
+					for(int sp_begin=0; sp_begin<shape.nsp; sp_begin += blk_pool.x){
+						SuperpixelFreqKernel_12Zero_chunked <T_in, T_out> <<<grid_chunk, blk_pool, 0, device.stream()>>> (in, out, p_batch, sp_begin);
+					}
 				}
 			}
 			break;
