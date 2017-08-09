@@ -79,6 +79,41 @@ class SpfreqKernelTest(tf.test.TestCase):
 	def testIncr_chunked_08_full(self):
 		self.incr_chunked(32, 600, 64)
 
+	def spidx_chunked(self, batch, nsp, cm, pool = 16):
+		sample_input = np.random.randint(nsp, size = (batch, cm*2, cm*2)).astype('i4')
+		each_ans = np.repeat(np.arange(nsp), cm*cm).reshape((-1, cm, cm))
+		with self.test_session():
+			result = spfreqOp(sample_input, output_shape = (nsp, cm, cm), test_kernel=14).eval()
+			for r in result:
+				self.assertAllEqual(r, each_ans)
+
+	def testSpIdx_chunked_00(self):
+		self.spidx_chunked(1, 3, 2, 2)
+
+	def testSpIdx_chunked_01_single_block(self):
+		self.spidx_chunked(1, 4, 16)
+
+	def testSpIdx_chunked_02_cm_blocks(self):
+		self.spidx_chunked(1, 4, 20)
+
+	def testSpIdx_chunked_03_sp_blocks(self):
+		self.spidx_chunked(1, 8, 16)
+
+	def testSpIdx_chunked_04_spcm_blocks(self):
+		self.spidx_chunked(1, 8, 20)
+
+	def testSpIdx_chunked_05_batches(self):
+		self.spidx_chunked(3, 4, 16)
+
+	def testSpIdx_chunked_06_more_batches(self):
+		self.spidx_chunked(20, 4, 16)
+
+	def testSpIdx_chunked_07_batches_sp(self):
+		self.spidx_chunked(20, 8, 16)
+
+	def testSpIdx_chunked_08_full(self):
+		self.spidx_chunked(32, 600, 64)
+
 	def area_chunked(self, batch, nsp, cm, pool = 16, debug = False):
 		sample_input = np.random.randint(nsp, size = (batch, cm*2, cm*2)).astype('i4')
 		sample_area = np.array([standard(segments, (cm, cm), nsp) for segments in sample_input])

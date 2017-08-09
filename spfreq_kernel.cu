@@ -213,8 +213,7 @@ void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape
 			break;
 		case 12:
 			{
-				dim3 grid_chunk(1, GDIV(shape.spatial.rows * shape.spatial.cols, blk_pool.y), 1);
-				
+				dim3 grid_chunk(1, GDIV(shape.spatial_sz, blk_pool.y), 1);
 				for(int p_batch = 0; p_batch < shape.batch_sz; ++p_batch){
 					for(int p_sp=0; p_sp<shape.nsp; p_sp += blk_pool.x)
 						SPFREQ_KERNEL(SuperpixelFreqKernel_12Zero_chunked);
@@ -223,13 +222,21 @@ void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape
 			break;
 		case 13:
 			{
-				dim3 grid_chunk(1, GDIV(shape.spatial.rows * shape.spatial.cols, blk_pool.y), 1);
-				
+				dim3 grid_chunk(1, GDIV(shape.spatial_sz, blk_pool.y), 1);
 				for(int p_batch = 0; p_batch < shape.batch_sz; ++p_batch){
 					for(int p_sp=0; p_sp<shape.nsp; p_sp += blk_pool.x)
 						SPFREQ_KERNEL(SuperpixelFreqKernel_12Zero_chunked);
 					for(int p_sp=0; p_sp<shape.nsp; p_sp += blk_pool.x)
 						SPFREQ_KERNEL(SuperpixelFreqKernel_13Incr_chunked);
+				}
+			}
+			break;
+		case 14:
+			{
+				dim3 grid_chunk(1, GDIV(shape.spatial_sz, blk_pool.y), 1);
+				for(int p_batch = 0; p_batch < shape.batch_sz; ++p_batch){
+					for(int p_sp=0; p_sp<shape.nsp; p_sp += blk_pool.x)
+						SPFREQ_KERNEL(SuperpixelFreqKernel_14SpIdx_chunked);
 				}
 			}
 			break;
