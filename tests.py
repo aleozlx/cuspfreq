@@ -31,13 +31,13 @@ class SpfreqKernelTest(tf.test.TestCase):
 		# 	self.assertAllEqual(result, sample_area)
 
 	def testIncrChunked_adim(self):
-		nsp = 100; cm = 16
-		sample_input = np.random.randint(nsp, size = (3, cm*9, cm*13)).astype('i4')
-		sample_area = np.ones((sample_input.shape[0], nsp, cm, cm))
+		batch = 32; nsp = 600; cm = 64
+		sample_input = np.random.randint(nsp, size = (batch, cm*16, cm*16)).astype('i4')
+		sample_area = np.ones((batch, nsp, cm, cm))
 		with self.test_session():
-			result = spfreqOp(sample_input, output_shape = (nsp, cm, cm), test_kernel=13)
-			# print('diff', sample_area-result)
-			self.assertAllEqual(result.eval(), sample_area)
+			result = spfreqOp(sample_input, output_shape = (nsp, cm, cm), test_kernel=13).eval()
+			# print('diff', np.sum((sample_area-result)**2, axis = (1,2,3)))
+			self.assertAllEqual(result, sample_area)
 
 if __name__ == "__main__":
 	tf.test.main()

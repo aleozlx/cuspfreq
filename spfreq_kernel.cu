@@ -42,7 +42,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line) {
 __device__ __constant__ SuperpixelFreqShape _spfreq_shape;
 
 #define INTERIOR3D (IDX_BATCH < spfreq_shape.batch_sz && IDX_SUPERPIXEL < spfreq_shape.nsp && IDX_SPATIAL < spfreq_shape.spatial_sz)
-
+#define INTERIOR (IDX_SUPERPIXEL < spfreq_shape.nsp && IDX_SPATIAL < spfreq_shape.spatial_sz)
 template <typename T_in, typename T_out>
 __global__ void SuperpixelFreqKernel_00Zero(const T_in* in, T_out* out) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
@@ -112,36 +112,34 @@ __global__ void SuperpixelFreqKernel_11Area_chunked(const T_in* in, T_out* out, 
 }
 
 template <typename T_in, typename T_out>
-__global__ void SuperpixelFreqKernel_12Zero_chunked(const T_in* in, T_out* out, int sp_begin) {
+__global__ void SuperpixelFreqKernel_12Zero_chunked(const T_in* in, T_out* out, int IDX_BATCH, int sp_begin) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
-	const int IDX_BATCH = blockIdx.z,
-			  IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + sp_begin,
+	const int IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + sp_begin,
 			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
-	if(INTERIOR3D){
-		const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
-			  PER_THREAD_COLS = spfreq_shape.stride.in[3],
-			  IDX_TILE_ROWS = threadIdx.y / PER_THREAD_COLS * spfreq_shape._spatial_sz.rows,
-			  IDX_TILE_COLS = threadIdx.y % PER_THREAD_COLS * spfreq_shape._spatial_sz.cols,
-			  THREAD_INPUT_OFFSET = IDX_BATCH * spfreq_shape.stride.in[0],
-			  INPUT_SPATIAL_STRIDE = spfreq_shape.stride.in[1];
+	if(INTERIOR){
+		// const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
+		// 	  PER_THREAD_COLS = spfreq_shape.stride.in[3],
+		// 	  IDX_TILE_ROWS = threadIdx.y / PER_THREAD_COLS * spfreq_shape._spatial_sz.rows,
+		// 	  IDX_TILE_COLS = threadIdx.y % PER_THREAD_COLS * spfreq_shape._spatial_sz.cols,
+		// 	  THREAD_INPUT_OFFSET = IDX_BATCH * spfreq_shape.stride.in[0],
+		// 	  INPUT_SPATIAL_STRIDE = spfreq_shape.stride.in[1];
 		out[IDX_BATCH * spfreq_shape.stride.out[0] + 
 			IDX_SUPERPIXEL * spfreq_shape.stride.out[1] + IDX_SPATIAL] = 0;
 	}
 }
 
 template <typename T_in, typename T_out>
-__global__ void SuperpixelFreqKernel_13Incr_chunked(const T_in* in, T_out* out, int sp_begin) {
+__global__ void SuperpixelFreqKernel_13Incr_chunked(const T_in* in, T_out* out, int IDX_BATCH, int sp_begin) {
 	const SuperpixelFreqShape spfreq_shape = _spfreq_shape;
-	const int IDX_BATCH = blockIdx.z,
-			  IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + sp_begin,
+	const int IDX_SUPERPIXEL = blockDim.x * blockIdx.x + threadIdx.x + sp_begin,
 			  IDX_SPATIAL = blockDim.y * blockIdx.y + threadIdx.y;
-	if(INTERIOR3D){
-		const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
-			  PER_THREAD_COLS = spfreq_shape.stride.in[3],
-			  IDX_TILE_ROWS = threadIdx.y / PER_THREAD_COLS * spfreq_shape._spatial_sz.rows,
-			  IDX_TILE_COLS = threadIdx.y % PER_THREAD_COLS * spfreq_shape._spatial_sz.cols,
-			  THREAD_INPUT_OFFSET = IDX_BATCH * spfreq_shape.stride.in[0],
-			  INPUT_SPATIAL_STRIDE = spfreq_shape.stride.in[1];
+	if(INTERIOR){
+		// const int PER_THREAD_ROWS = spfreq_shape.stride.in[2],
+		// 	  PER_THREAD_COLS = spfreq_shape.stride.in[3],
+		// 	  IDX_TILE_ROWS = threadIdx.y / PER_THREAD_COLS * spfreq_shape._spatial_sz.rows,
+		// 	  IDX_TILE_COLS = threadIdx.y % PER_THREAD_COLS * spfreq_shape._spatial_sz.cols,
+		// 	  THREAD_INPUT_OFFSET = IDX_BATCH * spfreq_shape.stride.in[0],
+		// 	  INPUT_SPATIAL_STRIDE = spfreq_shape.stride.in[1];
 		out[IDX_BATCH * spfreq_shape.stride.out[0] + 
 			IDX_SUPERPIXEL * spfreq_shape.stride.out[1] + IDX_SPATIAL] += 1;
 	}
@@ -191,7 +189,7 @@ T_out* SuperpixelFreqKernel_20RSum(const GPUDevice& device, const SuperpixelFreq
 
 template <typename T_in, typename T_out>
 void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape &shape, const T_in* in, T_out* out){
-	dim3 blk_pool(2, 256, 1),
+	dim3 blk_pool(4, 256, 1),
 		grid_pool(GDIV(shape.nsp, blk_pool.x),
 			GDIV(shape.stride.in[2] * shape.stride.in[3], blk_pool.y),
 			GDIV(shape.batch_sz, blk_pool.z));
@@ -216,14 +214,15 @@ void unit_test(int test_case, const GPUDevice& device, const SuperpixelFreqShape
 			break;
 		case 13:
 			{
-				dim3 grid_chunk(1,
-						GDIV(shape.stride.in[2] * shape.stride.in[3], blk_pool.y),
-						GDIV(shape.batch_sz, blk_pool.z));
-				for(int sp_begin=0; sp_begin<shape.nsp; sp_begin += blk_pool.x){
-					SuperpixelFreqKernel_12Zero_chunked <T_in, T_out> <<<grid_chunk, blk_pool, 0, device.stream()>>> (in, out, sp_begin);
-				}
-				for(int sp_begin=0; sp_begin<shape.nsp; sp_begin += blk_pool.x){
-					SuperpixelFreqKernel_13Incr_chunked <T_in, T_out> <<<grid_chunk, blk_pool, 0, device.stream()>>> (in, out, sp_begin);
+				dim3 grid_chunk(1, GDIV(shape._spatial_sz.rows * shape._spatial_sz.cols, blk_pool.y), 1);
+				
+				for(int p_batch = 0; p_batch < shape.batch_sz; ++p_batch){
+					for(int sp_begin=0; sp_begin<shape.nsp; sp_begin += blk_pool.x){
+						SuperpixelFreqKernel_12Zero_chunked <T_in, T_out> <<<grid_chunk, blk_pool, 0, device.stream()>>> (in, out, p_batch, sp_begin);
+					}
+					for(int sp_begin=0; sp_begin<shape.nsp; sp_begin += blk_pool.x){
+						SuperpixelFreqKernel_13Incr_chunked <T_in, T_out> <<<grid_chunk, blk_pool, 0, device.stream()>>> (in, out, p_batch, sp_begin);
+					}
 				}
 			}
 			break;

@@ -49,7 +49,7 @@ struct SuperpixelFreqShapeBase {
 	}
 };
 
-typedef SuperpixelFreqShapeBase<short> SuperpixelFreqShape;
+typedef SuperpixelFreqShapeBase<int> SuperpixelFreqShape;
 
 template <typename Device, typename T_in, typename T_out>
 struct SuperpixelFreqFunctor {
