@@ -1,4 +1,3 @@
-#include <iostream>
 #include "spfreq.h"
 
 #define EIGEN_USE_THREADS
@@ -26,12 +25,12 @@ class SuperpixelFreqOp : public OpKernel {
 			errors::InvalidArgument("output_shape must be 3-tuple"));
 
 		TensorShape in = input.shape();
-		const int64 batch_sz = in.dim_size(0);
+		const int64 batch_size = in.dim_size(0);
 		TensorShape out;
-		out.AddDim(batch_sz);
+		out.AddDim(batch_size);
 		out.AppendShape(output_shape);
 
-		Tensor* output = NULL;
+		Tensor* output = nullptr;
 		OP_REQUIRES_OK(context, context->allocate_output(0, out, &output));
 
 		OP_REQUIRES(context, in.dim_size(1)%output_shape.dim_size(1)==0,
@@ -61,15 +60,15 @@ REGISTER_OP("SuperpixelFreq")
 	.SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
 		::tensorflow::shape_inference::ShapeHandle output_shape;
 
-		::tensorflow::shape_inference::ShapeHandle batch_sz;
-		TF_RETURN_IF_ERROR(c->Subshape(c->input(0), 0, 1, &batch_sz));
+		::tensorflow::shape_inference::ShapeHandle batch_size;
+		TF_RETURN_IF_ERROR(c->Subshape(c->input(0), 0, 1, &batch_size));
 
 		::tensorflow::TensorShapeProto shape_attr;
 		TF_RETURN_IF_ERROR(c->GetAttr("output_shape", &shape_attr));
 		TF_RETURN_IF_ERROR(c->MakeShapeFromShapeProto(shape_attr, &output_shape));
 
 		::tensorflow::shape_inference::ShapeHandle out;
-		TF_RETURN_IF_ERROR(c->Concatenate(batch_sz, output_shape, &out));
+		TF_RETURN_IF_ERROR(c->Concatenate(batch_size, output_shape, &out));
 		c->set_output(0, out);
 		return Status::OK();
 	});
