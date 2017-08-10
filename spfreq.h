@@ -27,27 +27,27 @@ namespace spfreq {
 
 template <typename SIZE>
 struct SuperpixelFreqShapeBase {
-	SIZE num_superpixel, spatial_size, batch_size;
-	struct { SIZE rows, cols; } spatial;
-	struct { SIZE rows, cols; } per_thread;
-	struct { SIZE out[2], in[2]; } stride;
-	// SIZE temp_size[4];
+  SIZE num_superpixel, spatial_size, batch_size;
+  struct { SIZE rows, cols; } spatial;
+  struct { SIZE rows, cols; } per_thread;
+  struct { SIZE out[2], in[2]; } stride;
+  // SIZE temp_size[4];
 
-	inline SuperpixelFreqShapeBase() { }
+  inline SuperpixelFreqShapeBase() { }
 
-	SuperpixelFreqShapeBase(const tensorflow::TensorShape &input_shape, const tensorflow::TensorShape &output_shape) {
-		this->batch_size = input_shape.dim_size(0);
-		this->num_superpixel = output_shape.dim_size(0);
-		this->spatial.rows = output_shape.dim_size(1);
-		this->spatial.cols = output_shape.dim_size(2);
-		this->spatial_size = output_shape.dim_size(1) * output_shape.dim_size(2);
-		this->stride.out[0] = this->num_superpixel * this->spatial_size; // output batch stride
-		this->stride.out[1] = this->spatial_size; // output superpixel stride
-		this->stride.in[0] = input_shape.dim_size(1) * input_shape.dim_size(2); // input batch stride
-		this->stride.in[1] = input_shape.dim_size(2); // input spatial stride
-		this->per_thread.rows = input_shape.dim_size(1) / output_shape.dim_size(1); // input rows / thread
-		this->per_thread.cols = input_shape.dim_size(2) / output_shape.dim_size(2); // input cols / thread
-	}
+  SuperpixelFreqShapeBase(const tensorflow::TensorShape &input_shape, const tensorflow::TensorShape &output_shape) {
+    this->batch_size = input_shape.dim_size(0);
+    this->num_superpixel = output_shape.dim_size(0);
+    this->spatial.rows = output_shape.dim_size(1);
+    this->spatial.cols = output_shape.dim_size(2);
+    this->spatial_size = output_shape.dim_size(1) * output_shape.dim_size(2);
+    this->stride.out[0] = this->num_superpixel * this->spatial_size; // output batch stride
+    this->stride.out[1] = this->spatial_size; // output superpixel stride
+    this->stride.in[0] = input_shape.dim_size(1) * input_shape.dim_size(2); // input batch stride
+    this->stride.in[1] = input_shape.dim_size(2); // input spatial stride
+    this->per_thread.rows = input_shape.dim_size(1) / output_shape.dim_size(1); // input rows / thread
+    this->per_thread.cols = input_shape.dim_size(2) / output_shape.dim_size(2); // input cols / thread
+  }
 };
 
 typedef SuperpixelFreqShapeBase<int> SuperpixelFreqShape;
