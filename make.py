@@ -13,7 +13,8 @@ CMD = lambda s: os.system(s.format(
 	CUDA_LIB = '/usr/local/cuda-8.0/lib64',
 	CXX_FLAGS = '-O2',
 	TARGET_LIBS = "-lcublas -lcudart -lcuda",
-	CUDA_GENCODE = """-gencode arch=compute_61,code=sm_61 -gencode arch=compute_61,code=compute_61"""
+        # ref: http://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/
+	CUDA_GENCODE = """-gencode arch=compute_60,code=sm_60 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_61,code=compute_61"""
 ))
 
 CMD("""nvcc -dc -std=c++11 --compiler-options {CXX_FLAGS} --expt-relaxed-constexpr \
